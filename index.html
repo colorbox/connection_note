@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connected Memo App</title>
+    <style>
+        /* Previous styles remain the same */
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            height: calc(100vh - 40px);
+        }
+        .input-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-section {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: white;
+            position: relative;
+            overflow: hidden;
+        }
+        #memo-input {
+            width: 100%;
+            height: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            resize: none;
+            font-size: 14px;
+            line-height: 1.5;
+            tab-size: 4;
+        }
+        .preview-content {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #nodes-container {
+            position: absolute;
+            inset: 60px;
+            width: calc(100% - 120px);
+            height: calc(100% - 120px);
+            z-index: 2;
+            pointer-events: none;
+        }
+        .node {
+            position: absolute;
+            background: white;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 6px 10px;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+            transition: all 0.3s ease;
+            cursor: default;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            pointer-events: auto;
+            font-size: 13px;
+        }
+        .node:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transform: translate(-50%, -50%) scale(1.05);
+            z-index: 3;
+        }
+        .node.root {
+            background: #f8f8f8;
+            border-width: 2px;
+            font-weight: bold;
+        }
+        #connections {
+            position: absolute;
+            inset: 60px;
+            width: calc(100% - 120px);
+            height: calc(100% - 120px);
+            pointer-events: none;
+            z-index: 1;
+        }
+        path {
+            stroke: #666;
+            stroke-width: 1.5;
+            fill: none;
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="input-section">
+            <textarea id="memo-input" placeholder="Enter your memo here...&#10;Use Tab to indent and Shift+Tab to unindent" spellcheck="false"></textarea>
+        </div>
+        <div class="preview-section">
+            <div class="preview-content">
+                <svg id="connections"></svg>
+                <div id="nodes-container"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        class Node {
+            constructor(text, level) {
+                this.text = text;
+                this.level = level;
+                this.children = [];
+                this.x = 0;
+                this.y = 0;
+                this.angle = 0;
+                this.element = null;
+            }
+        }
+
+        class MemoApp {
+            constructor() {
+                this.input = document.getElementById('memo-input');
+                this.nodesContainer = document.getElementById('nodes-container');
+                this.svg = document.getElementById('connections');
+                this.previewContent = document.querySelector('.preview-content');
+                
+                this.baseRadius = 50;
+                this.levelSpacing = 80;
+                this.indentSize = 4;
+                
+                this.setupEventListeners();
+                
+                // Initial setup
+                requestAnimationFrame(() => {
+                    this.updateSvgSize();
+                    this.updatePreview();
+                });
+
+                // Monitor input value changes
+                this.lastValue = this.input.value;
+                setInterval(() => {
+                    if (this.input.value !== this.lastValue) {
+                        this.lastValue = this.input.value;
+                        this.updatePreview();
+                    }
+                }, 100);
+
+                // Add test data
+                setTimeout(() => {
+                    this.input.value = `Project
+    Design
+        UI
+        UX
+    Development
+        Frontend
+        Backend
+    Testing
+        Unit
+        E2E`;
+                    this.input.dispatchEvent(new Event('input', { bubbles: true }));
+                }, 500);
+            }
+
+            setupEventListeners() {
+                // Handle input events
+                ['input', 'keyup', 'change'].forEach(eventType => {
+                    this.input.addEventListener(eventType, () => {
+                        requestAnimationFrame(() => this.updatePreview());
+                    });
+                });
+
+                // Handle paste event
+                this.input.addEventListener('paste', () => {
+                    setTimeout(() => this.updatePreview(), 0);
+                });
+
+                // Handle window resize
+                window.addEventListener('resize', () => {
+                    requestAnimationFrame(() => {
+                        this.updateSvgSize();
+                        this.updatePreview();
+                    });
+                });
+                
+                // Handle Tab and Shift+Tab for indentation
+                this.input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        
+                        const cursorPos = this.input.selectionStart;
+                        const text = this.input.value;
+                        
+                        // Find current line
+                        const beforeCursor = text.slice(0, cursorPos);
+                        const afterCursor = text.slice(cursorPos);
+                        const lastNewline = beforeCursor.lastIndexOf('\n') + 1;
+                        const nextNewline = afterCursor.indexOf('\n');
+                        
+                        const currentLineStart = lastNewline;
+                        const currentLineEnd = cursorPos + (nextNewline >= 0 ? nextNewline : afterCursor.length);
+                        const currentLine = text.slice(currentLineStart, currentLineEnd);
+                        
+                        let newText;
+                        let newCursorPos;
+                        
+                        if (e.shiftKey) {
+                            // Remove one level of indentation
+                            const spaces = currentLine.match(/^ */)[0].length;
+                            const removeCount = Math.min(spaces, this.indentSize);
+                            const newLine = currentLine.slice(removeCount);
+                            newText = text.slice(0, currentLineStart) + newLine + text.slice(currentLineEnd);
+                            newCursorPos = Math.max(currentLineStart, cursorPos - removeCount);
+                        } else {
+                            // Add one level of indentation
+                            const indent = ' '.repeat(this.indentSize);
+                            const newLine = indent + currentLine;
+                            newText = text.slice(0, currentLineStart) + newLine + text.slice(currentLineEnd);
+                            newCursorPos = cursorPos + this.indentSize;
+                        }
+                        
+                        // Update text and cursor position
+                        this.input.value = newText;
+                        this.input.selectionStart = newCursorPos;
+                        this.input.selectionEnd = newCursorPos;
+                        
+                        // Trigger input event
+                        this.input.dispatchEvent(new Event('input', { bubbles: true }));
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        
+                        const cursorPos = this.input.selectionStart;
+                        const text = this.input.value;
+                        const lines = text.split('\n');
+                        
+                        // Find the current line number
+                        let lineStart = 0;
+                        let currentLineNumber = 0;
+                        while (lineStart <= cursorPos) {
+                            currentLineNumber++;
+                            lineStart = text.indexOf('\n', lineStart);
+                            if (lineStart === -1) break;
+                            lineStart++;
+                        }
+                        currentLineNumber--;
+
+                        // Get current line's content
+                        const currentLine = lines[currentLineNumber];
+                        
+                        // Get indentation of current line
+                        const currentIndent = currentLine.match(/^\s*/)[0];
+                        
+                        // Insert new line with same indentation
+                        const beforeCursor = text.slice(0, cursorPos);
+                        const afterCursor = text.slice(cursorPos);
+                        this.input.value = beforeCursor + '\n' + currentIndent + afterCursor;
+                        
+                        // Move cursor after indentation
+                        const newCursorPos = cursorPos + 1 + currentIndent.length;
+                        this.input.selectionStart = newCursorPos;
+                        this.input.selectionEnd = newCursorPos;
+                        
+                        // Trigger input event
+                        this.input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                });
+            }
+
+            updateSvgSize() {
+                const rect = this.previewContent.getBoundingClientRect();
+                
+                this.svg.style.width = '100%';
+                this.svg.style.height = '100%';
+                this.svg.setAttribute('width', rect.width - 120);
+                this.svg.setAttribute('height', rect.height - 120);
+                this.svg.setAttribute('viewBox', `60 60 ${rect.width - 120} ${rect.height - 120}`);
+                
+                this.centerX = rect.width / 2;
+                this.centerY = rect.height / 2;
+            }
+
+            buildTree() {
+                const lines = this.input.value.split('\n').filter(line => line.trim());
+                if (lines.length === 0) return null;
+
+                const root = new Node(lines[0].trim(), 0);
+                let lastNodeAtLevel = new Array(100).fill(null);
+                lastNodeAtLevel[0] = root;
+
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i];
+                    const level = Math.floor(line.search(/\S/) / this.indentSize);
+                    if (level < 0) continue;
+
+                    const node = new Node(line.trim(), level);
+                    const parent = lastNodeAtLevel[level - 1];
+                    
+                    if (parent) {
+                        parent.children.push(node);
+                    }
+                    
+                    lastNodeAtLevel[level] = node;
+                }
+
+                return root;
+            }
+
+            layoutNodes(node, startAngle, endAngle, level = 0) {
+                if (!node) return;
+
+                const radius = this.baseRadius + (level * this.levelSpacing);
+                
+                if (level === 0) {
+                    node.x = this.centerX;
+                    node.y = this.centerY;
+                } else {
+                    const angle = (startAngle + endAngle) / 2;
+                    node.angle = angle;
+                    node.x = this.centerX + radius * Math.cos(angle);
+                    node.y = this.centerY + radius * Math.sin(angle);
+                }
+
+                const childCount = node.children.length;
+                if (childCount > 0) {
+                    const angleStep = (endAngle - startAngle) / childCount;
+                    node.children.forEach((child, i) => {
+                        const childStartAngle = startAngle + (i * angleStep);
+                        const childEndAngle = childStartAngle + angleStep;
+                        this.layoutNodes(child, childStartAngle, childEndAngle, level + 1);
+                    });
+                }
+            }
+
+            createNodeElement(node, isRoot = false) {
+                const element = document.createElement('div');
+                element.className = `node ${isRoot ? 'root' : ''}`;
+                element.textContent = node.text;
+                element.style.left = `${node.x}px`;
+                element.style.top = `${node.y}px`;
+                node.element = element;
+                return element;
+            }
+
+            drawConnections(node) {
+                node.children.forEach(child => {
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    
+                    const dx = child.x - node.x;
+                    const dy = child.y - node.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const controlDistance = distance / 3;
+                    
+                    const controlPoint1X = node.x + (controlDistance * Math.cos(child.angle));
+                    const controlPoint1Y = node.y + (controlDistance * Math.sin(child.angle));
+                    const controlPoint2X = child.x - (controlDistance * Math.cos(child.angle));
+                    const controlPoint2Y = child.y - (controlDistance * Math.sin(child.angle));
+
+                    path.setAttribute('d', `M ${node.x} ${node.y} C ${controlPoint1X} ${controlPoint1Y}, ${controlPoint2X} ${controlPoint2Y}, ${child.x} ${child.y}`);
+                    this.svg.appendChild(path);
+                    
+                    this.drawConnections(child);
+                });
+            }
+
+            updatePreview() {
+                const root = this.buildTree();
+                if (!root) return;
+
+                this.layoutNodes(root, -Math.PI, Math.PI);
+
+                // Clear previous content
+                this.nodesContainer.innerHTML = '';
+                this.svg.innerHTML = '';
+
+                // Render nodes
+                const renderNode = (node, isRoot = false) => {
+                    const element = this.createNodeElement(node, isRoot);
+                    this.nodesContainer.appendChild(element);
+                    node.children.forEach(child => renderNode(child));
+                };
+                renderNode(root, true);
+
+                // Draw connections
+                this.drawConnections(root);
+            }
+        }
+
+        // Initialize app
+        const app = new MemoApp();
+    </script>
+</body>
+</html>
