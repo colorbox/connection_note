@@ -217,41 +217,47 @@
                         // Trigger input event
                         this.input.dispatchEvent(new Event('input', { bubbles: true }));
                     } else if (e.key === 'Enter') {
-                        e.preventDefault();
+                        console.log('Enter key pressed, isComposing:', e.isComposing);
                         
-                        const cursorPos = this.input.selectionStart;
-                        const text = this.input.value;
-                        const lines = text.split('\n');
-                        
-                        // Find the current line number
-                        let lineStart = 0;
-                        let currentLineNumber = 0;
-                        while (lineStart <= cursorPos) {
-                            currentLineNumber++;
-                            lineStart = text.indexOf('\n', lineStart);
-                            if (lineStart === -1) break;
-                            lineStart++;
-                        }
-                        currentLineNumber--;
+                        // Only apply custom behavior if NOT in the middle of IME composition
+                        if (!e.isComposing) {
+                            e.preventDefault();
+                            
+                            const cursorPos = this.input.selectionStart;
+                            const text = this.input.value;
+                            const lines = text.split('\n');
+                            
+                            // Find the current line number
+                            let lineStart = 0;
+                            let currentLineNumber = 0;
+                            while (lineStart <= cursorPos) {
+                                currentLineNumber++;
+                                lineStart = text.indexOf('\n', lineStart);
+                                if (lineStart === -1) break;
+                                lineStart++;
+                            }
+                            currentLineNumber--;
 
-                        // Get current line's content
-                        const currentLine = lines[currentLineNumber];
-                        
-                        // Get indentation of current line
-                        const currentIndent = currentLine.match(/^\s*/)[0];
-                        
-                        // Insert new line with same indentation
-                        const beforeCursor = text.slice(0, cursorPos);
-                        const afterCursor = text.slice(cursorPos);
-                        this.input.value = beforeCursor + '\n' + currentIndent + afterCursor;
-                        
-                        // Move cursor after indentation
-                        const newCursorPos = cursorPos + 1 + currentIndent.length;
-                        this.input.selectionStart = newCursorPos;
-                        this.input.selectionEnd = newCursorPos;
-                        
-                        // Trigger input event
-                        this.input.dispatchEvent(new Event('input', { bubbles: true }));
+                            // Get current line's content
+                            const currentLine = lines[currentLineNumber];
+                            
+                            // Get indentation of current line
+                            const currentIndent = currentLine.match(/^\s*/)[0];
+                            
+                            // Insert new line with same indentation
+                            const beforeCursor = text.slice(0, cursorPos);
+                            const afterCursor = text.slice(cursorPos);
+                            this.input.value = beforeCursor + '\n' + currentIndent + afterCursor;
+                            
+                            // Move cursor after indentation
+                            const newCursorPos = cursorPos + 1 + currentIndent.length;
+                            this.input.selectionStart = newCursorPos;
+                            this.input.selectionEnd = newCursorPos;
+                            
+                            // Trigger input event
+                            this.input.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        // If in IME composition, let the default Enter behavior handle the conversion
                     }
                 });
             }
