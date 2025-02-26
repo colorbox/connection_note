@@ -176,6 +176,10 @@
                 // Handle Tab and Shift+Tab for indentation
                 this.input.addEventListener('keydown', (e) => {
                     if (e.key === 'Tab') {
+                        if (e.isComposing) {
+                            return;
+                        }
+
                         e.preventDefault();
                         
                         const cursorPos = this.input.selectionStart;
